@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace YoutubeClipper;
@@ -101,8 +104,11 @@ internal sealed class MainForm : Form
         LoadSettings();
     }
 
+    private static string AppDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YoutubeClipper");
+
     private static string SettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YoutubeClipper", "settings.txt");
+        Path.Combine(AppDir, "settings.txt");
 
     private void LoadSettings()
     {
@@ -182,7 +188,8 @@ internal sealed class MainForm : Form
         var token = _cts.Token;
         try
         {
-            await Task.Run(() => Cut(job, ytdlp, ffmpeg, token), token);
+            var js = await EnsureJsRuntime(token);
+            await Task.Run(() => Cut(job, ytdlp, ffmpeg, js, token), token);
         }
         catch (OperationCanceledException)
         {
@@ -243,7 +250,43 @@ internal sealed class MainForm : Form
         return true;
     }
 
-    private void Cut(Job job, string ytdlp, string ffmpeg, CancellationToken token)
+    private async Task<string> EnsureJsRuntime(CancellationToken token)
+    {
+        var deno = FindTool("deno");
+        var bundled = Path.Combine(AppDir, "deno.exe");
+        if (deno is null && File.Exists(bundled)) deno = bundled;
+        if (deno is not null) return "deno:" + deno;
+
+        Log("YouTube braucht Deno. Einmaliger Download …");
+        Directory.CreateDirectory(AppDir);
+        var asset = RuntimeInformation.OSArchitecture == Architecture.Arm64
+            ? "deno-aarch64-pc-windows-msvc.zip"
+            : "deno-x86_64-pc-windows-msvc.zip";
+        var zipPath = Path.Combine(Path.GetTempPath(), asset);
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("YoutubeClipper");
+        using (var response = await http.GetAsync(
+            "https://github.com/denoland/deno/releases/latest/download/" + asset,
+            HttpCompletionOption.ResponseHeadersRead, token))
+        {
+            response.EnsureSuccessStatusCode();
+            await using var src = await response.Content.ReadAsStreamAsync(token);
+            await using var dst = File.Create(zipPath);
+            await src.CopyToAsync(dst, token);
+        }
+        ZipFile.ExtractToDirectory(zipPath, AppDir, true);
+        try { File.Delete(zipPath); } catch { /* temp leftover is fine */ }
+        if (!File.Exists(bundled))
+        {
+            var nested = Directory.GetFiles(AppDir, "deno.exe", SearchOption.AllDirectories).FirstOrDefault();
+            if (nested is null) throw new InvalidOperationException("Deno-Download hat keine deno.exe ergeben.");
+            File.Copy(nested, bundled, true);
+        }
+        Log("Deno ist da.");
+        return "deno:" + bundled;
+    }
+
+    private void Cut(Job job, string ytdlp, string ffmpeg, string jsRuntime, CancellationToken token)
     {
         var toolDir = Path.GetDirectoryName(ytdlp)!;
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
@@ -259,6 +302,8 @@ internal sealed class MainForm : Form
                 "-f", "ba[ext=m4a]/ba",
                 "--no-playlist",
                 "--no-mtime",
+                "--js-runtimes", jsRuntime,
+                "--remote-components", "ejs:npm",
                 "-o", "source.%(ext)s",
                 job.Url);
 
