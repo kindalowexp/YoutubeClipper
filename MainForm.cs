@@ -223,13 +223,11 @@ internal sealed class MainForm : Form
         var temp = Directory.CreateTempSubdirectory("ytclips_").FullName;
         try
         {
-            var end = job.Start + job.Length;
-            var section = "*" + FormatTs(job.Start) + "-" + FormatTs(end);
-            Log("Lade " + section + " …");
+            Log("Lade Audio …");
             Run(ytdlp, temp, token,
-                "-f", "bestaudio/best",
+                "-f", "ba[ext=m4a]/ba",
                 "--no-playlist",
-                "--download-sections", section,
+                "--no-mtime",
                 "-o", "source.%(ext)s",
                 job.Url);
 
@@ -237,10 +235,13 @@ internal sealed class MainForm : Form
             if (source is null) throw new InvalidOperationException("Download hat keine Datei erzeugt.");
 
             var full = Path.Combine(temp, "full.wav");
-            Log("Wandle nach WAV (44,1 kHz, mono, 16-bit) …");
+            Log("Schneide " + FormatTs(job.Start) + " +" + FormatTs(job.Length) + " und wandle nach WAV …");
             Run(ffmpeg, temp, token,
-                "-y", "-i", source, "-vn",
-                "-ac", "1", "-ar", "44100",
+                "-y",
+                "-ss", FormatTs(job.Start),
+                "-t", FormatTs(job.Length),
+                "-i", source,
+                "-vn", "-ac", "1", "-ar", "44100",
                 "-c:a", "pcm_s16le", full);
 
             Log("Schneide in " + job.Clip.ToString(CultureInfo.InvariantCulture) + "s-Clips …");
