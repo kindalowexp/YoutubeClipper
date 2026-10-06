@@ -92,8 +92,38 @@ internal sealed class MainForm : Form
         _browse.Click += (_, _) => Browse();
         _go.Click += async (_, _) => await RunAsync();
         _stop.Click += (_, _) => Cancel();
-        FormClosing += (_, _) => Cancel();
+        FormClosing += (_, _) =>
+        {
+            SaveSettings();
+            Cancel();
+        };
         AcceptButton = _go;
+        LoadSettings();
+    }
+
+    private static string SettingsPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "YoutubeClipper", "settings.txt");
+
+    private void LoadSettings()
+    {
+        if (!File.Exists(SettingsPath)) return;
+        var lines = File.ReadAllLines(SettingsPath);
+        if (lines.Length > 0) _url.Text = lines[0];
+        if (lines.Length > 1 && lines[1].Length > 0) _start.Text = lines[1];
+        if (lines.Length > 2 && lines[2].Length > 0) _length.Text = lines[2];
+        if (lines.Length > 3 && lines[3].Length > 0) _clip.Text = lines[3];
+        if (lines.Length > 4 && lines[4].Length > 0) _prefix.Text = lines[4];
+        if (lines.Length > 5 && lines[5].Length > 0) _output.Text = lines[5];
+    }
+
+    private void SaveSettings()
+    {
+        var dir = Path.GetDirectoryName(SettingsPath)!;
+        Directory.CreateDirectory(dir);
+        File.WriteAllLines(SettingsPath, new[]
+        {
+            _url.Text, _start.Text, _length.Text, _clip.Text, _prefix.Text, _output.Text,
+        });
     }
 
     private static void AddRow(TableLayoutPanel root, int row, string label, Control field, int span = 1)
@@ -136,6 +166,7 @@ internal sealed class MainForm : Form
     private async Task RunAsync()
     {
         if (!TryReadInputs(out var job)) return;
+        SaveSettings();
 
         var ytdlp = FindTool("yt-dlp");
         var ffmpeg = FindTool("ffmpeg");
